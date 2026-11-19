@@ -1,0 +1,69 @@
+name: SuperKart training
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "data/**"
+      - "pipeline.py"
+      - "requirements.txt"
+      - ".github/workflows/pipeline.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: superkart-training-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python pipeline.py validate
+      - run: python pipeline.py prepare
+      - uses: actions/upload-artifact@v4
+        with:
+          name: data-splits
+          path: splits/
+          if-no-files-found: error
+
+  train:
+    needs: prepare
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: data-splits
+          path: splits/
+      - run: python pipeline.py train
+      - uses: actions/upload-artifact@v4
+        with:
+          name: model-and-evaluation
+          path: models/
+          if-no-files-found: error
+      - name: Commit model and evaluation to main
+        if: github.ref == 'refs/heads/main'
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add models/
+          if ! git diff --cached --quiet; then
+            git commit -m 'Update SuperKart model and evaluation'
+            git push origin HEAD:main
+          fi
